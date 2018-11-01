@@ -1,0 +1,12 @@
+Package: straw
+Title: Code to AST Mappings, and Vice-versa
+Version: 0.0.1
+Authors@R: person("Michael", "Chow", email = "mc_al_github@fastmail.com", role = c("aut", "cre"))
+Description: What the package does (one paragraph).
+Depends: R (>= 3.5.1)
+Imports:
+    igraph
+License: MIT
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 6.1.0
