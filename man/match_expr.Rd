@@ -29,6 +29,6 @@ plot(g, layout = layout.reingold.tilford)
 g_ast <- create_parse_graph(exp, type = "ast")
 plot(g_ast, layout = layout.reingold.tilford)
 
-match_expr(g, g_ast, V(g)[2], V(g_ast)[2])
+match_expr(g, g_ast, g[2,], g_ast[2,])
 
 }

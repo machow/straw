@@ -1,20 +1,21 @@
-# convenience methods for processing ast --------------------------------------
-#
+# Graph data.frame creating functions ----
 # TODO: cleanup flow?
+#       handle pairlists
 # takes an call object, returns an enhanced tree representation (list) with
 #   * node id
 #   * parent_id
 #   * node: call object for node
 #   * text: simplified text for nodes that atomic or name types
-create_ast_graph <- function(x, acc = NULL, parent_id = 0) {
+create_ast_graph <- function(x, acc = NULL, parent_id = NA) {
   if (is.null(acc)) {
     acc <- new.env()
-    acc$crnt_n <- 0
+    acc$crnt_n <- 1
     acc$nodes <- list()
   }
 
-  node_id <- acc$crnt_n <- acc$crnt_n + 1
-  acc$nodes[[acc$crnt_n]] <- list(
+  node_id <- acc$crnt_n
+  acc$crnt_n <- acc$crnt_n + 1
+  acc$nodes[[node_id]] <- list(
     node = x,
     id = node_id,
     parent = parent_id,
@@ -23,8 +24,10 @@ create_ast_graph <- function(x, acc = NULL, parent_id = 0) {
 
   if (is.atomic(x) | is.name(x)) {
     NULL
-  } else if (is.call(x) | is.expression(x)) {
-    for (ii in 1:length(x)) {
+  } else if (is.call(x) | is.expression(x) | is.pairlist(x)) {
+    # don't use last node of function def (it's a srcref)
+    n_nodes <- if (x[[1]] == "function") length(x) - 1 else length(x)
+    for (ii in 1:n_nodes) {
       create_ast_graph(x[[ii]], acc, node_id)
     }
   } else {
@@ -34,9 +37,18 @@ create_ast_graph <- function(x, acc = NULL, parent_id = 0) {
 }
 
 
+create_ast_df <- function(x) {
+  if (!is.expression(x)) x <- as.expression(substitute(x))
+  nodes <- create_ast_graph(x)
+
+  for (ii in 1:length(nodes))
+    nodes[[ii]]$node = list(nodes[[ii]]$node)
+
+  dplyr::bind_rows(nodes)
+}
 
 
-# end convenience methods -----
+# Parse graph to AST graph linking functions -----
 
 #' Produce an ast or parse graph of an expression
 #'
@@ -57,24 +69,22 @@ create_parse_graph <- function(expr, type = c("parse", "ast")[1]) {
     header[1,] = NA
     header[1, 'id'] = 0
     y = rbind(header, y)
+    y$row_num = 1:nrow(y)
   }
   else if (type == "ast") {
     # TODO: replace create_ast_graph w/ something that returns a dataframe
-    y = as.data.frame(do.call("rbind", create_ast_graph(expr)))
+    y = create_ast_df(expr)
     y$token = NA
+    y$row_num = 1:nrow(y)
   }
   else {
     stop("type argument should be either 'parse' or 'ast'")
   }
 
   # find edges
-  y$new.id <- seq_along(y$id)
-  edge_pairs <- with(y, cbind(new.id[match(parent, id)], new.id))[-1,]
+  y$children <- multimatch(y$id, y$parent)
 
-  # create graph
-  h <- graph.tree(0) +
-    vertices(id = y$new.id, df_id = y$id, token = y$token, label= y$text) +
-    edges(c(t(edge_pairs)))
+  y
 }
 
 
@@ -94,39 +104,100 @@ create_parse_graph <- function(expr, type = c("parse", "ast")[1]) {
 #' g_ast <- create_parse_graph(exp, type = "ast")
 #' plot(g_ast, layout = layout.reingold.tilford)
 #'
-#' match_expr(g, g_ast, V(g)[2], V(g_ast)[2])
+#' match_expr(g, g_ast, g[2,], g_ast[2,])
 #'
-#' @importFrom igraph V neighbors
 #' @export
 match_expr <- function(g_parse, g_ast, parse_node, ast_node) {
-  parse_children <- V(g_parse)[neighbors(g_parse, parse_node, mode = "out")]
-  expr <- parse_children[token == "expr"]
 
-  ast_children <- V(g_ast)[neighbors(g_ast, ast_node)]
-  n_ast <- length(ast_children)
+  # note: could also use %||% from rlang
+  ast_children <- g_ast[ast_node$children[[1]],]
+  n_ast <- nrow(ast_children) %||% 0
 
-  # lispy calls are the same length (e.g. `+`(1,2))
-  # but more common use of operators, like 1 + 1, will have 1 less expr
-  if (n_ast != length(expr)) {
-    op <- parse_children[label == ast_children$label[1]]
-    expr <- c(op, expr)
+  if (n_ast == 0) {
+    NULL
+  } else if (ast_node$node[[1]]) {
+  } else if (is.pairlist(ast_node$node[[1]])) {
+    # pairlist occurs inside function definition, but its children are
+    # matched when visiting the function (see block below)
+    return(data.frame(parse_row = NULL, ast_row = NULL))
+  } else if (ast_children$node[[1]] == "function") {
+    # in the ast, function parameters are children of a pairlist,
+    # parse node: function ( a = <expr1>, b = <expr2> ... ) <expr>
+    #
 
-    # check for use of $ operator (e.g. a$'b'),
-    # since 'b' is not treated like an expression there
-    if (n_ast > length(expr)) {
-      quotes <- c('"', "'")
-      index_val <- paste0(quotes, ast_children$label[n_ast], quotes)
-      indx_op <- parse_children[label %in% index_val]
-      stopifnot(length(indx_op) == 1)
+    # keep `function`, "(", and body expr
+    # "(" will correspond to pairlist in ast
+    non_args <- parse_children[c(1,2,nrow(parse_children)),]
 
-      expr <- c(expr, indx_op)
+    # get ast args from pairlist, to match with parse args
+    # Match an expression for params with defaults. Otherwise, the parameter symbol.
+    ast_args <- g_ast[ast_children$children[[2]],]
+
+    empty_args <- sapply(
+      ast_args$node,
+      function(x) is.symbol(x) & x == ""
+      )
+
+    # Add two if not empty to get default arg value
+    par_symbol_indx <- which(parse_children$token == "SYMBOL_FORMALS")
+    args_indx <- ifelse(empty_args, par_symbol_indx, par_symbol_indx + 2)
+    args <- parse_children[args_indx,]
+
+    # TODO: remove once unit tested / sure we've covered all cases
+    stopifnot(nrow(args) == nrow(ast_args))
+    stopifnot(nrow(non_args) == nrow(ast_children))
+
+    expr <- bind_rows(non_args, args)
+    ast_children <- bind_rows(ast_children, ast_args)
+
+  } else {
+    parse_children <- g_parse[parse_node$children[[1]],]
+    expr <- filter(parse_children, token == "expr")
+
+    n_expr <- nrow(expr) %||% 0
+
+    if (n_expr != n_ast) {
+      # lispy calls are the same length (e.g. `+`(1,2))
+      # but inline operators, like 1 + 1, will have 1 less expr
+      op <- filter(parse_children, text == ast_children$text[1])
+      expr <- bind_rows(op, expr)
+
+      # check for use of $ operator (e.g. a$'b'),
+      # since 'b' is not treated like an expression there
+      if (op$text == "$") {
+        # quotes <- c('"', "'")
+        # index_val <- paste0(quotes, ast_children$text[n_ast], quotes)
+        # indx_op <- filter(parse_children, text %in% index_val)
+        indx_op <- parse_children[3,]
+
+        expr <- bind_rows(expr, indx_op)
+      } else if (op$text %in% c("[", "[[")) {
+        # indexing with [ or [[ can have empty arguments, e.g. x[1,,]
+        # empty arguments are included in ast call, but not in parse tree.
+        # To link the two trees, we map empty arguments in the AST to their
+        # following "," or "]" in the parse tree.
+        ast_args <- ast_children[-(1:2),]
+        empty_ast <- sapply(
+          ast_args$node,
+          function(x) is.symbol(x) & x == ""
+          )
+
+        # For empty AST nodes, point to delimiter. Otherwise point to preceeding expression.
+        delim_node_indx <- which(parse_children$text %in% c(",", "]"))
+        args_indx <- ifelse(empty_ast, delim_node_indx, delim_node_indx - 1)
+
+        expr <- bind_rows(
+          expr[1:2,],                       # non args
+          parse_children[args_indx,]        # args
+          )
+      }
+
+      stopifnot(nrow(expr) == n_ast)
     }
-
-    stopifnot(length(expr) == n_ast)
   }
-
-  data.frame(parse_id = expr$id, ast_id = ast_children$id)
+  data.frame(parse_row = expr$row_num, ast_row = ast_children$row_num)
 }
+
 
 #' Produce an ast or parse graph of an expression
 #'
@@ -144,26 +215,69 @@ match_expr <- function(g_parse, g_ast, parse_node, ast_node) {
 #'
 #' # find code corresponding to `$` call
 #' match_path(g, g_ast, V(g_ast)[label == "$"]$id)
-#'
+#' match_path(g, g_ast, 8)
 #' @importFrom igraph V shortest_paths
 #' @export
-match_path <- function(g_parse, g_ast, id) {
-  V(g_ast)[id]
-
-  nodes <- shortest_paths(g_ast, from = 1, to = id, output = 'vpath', mode = 'out')$vpath[[1]]
-  parse_indx <- c(1, rep(NA, length(nodes) - 1))
-  v_parse <- V(g_parse)
-  for (ii in 2:length(nodes)) {
-    crnt_parse_node <- v_parse[parse_indx[ii-1]]
-    node <- nodes[ii-1]
+match_path <- function(g_parse, g_ast, row_num) {
+  ast_path <- rev(path_to_root(g_ast, row_num))
+  nodes <- g_ast[ast_path,]
+  parse_indx <- c(1, rep(NA, nrow(nodes) - 1))
+  for (ii in 2:nrow(nodes)) {
+    crnt_parse_node <- g_parse[parse_indx[ii-1],]
+    node <- nodes[ii-1,]
 
     matches <- match_expr(g_parse, g_ast, crnt_parse_node, node)
 
     # set index for next node
-    parse_indx[ii] <- matches$parse_id[matches$ast_id == nodes[ii]$id]
+    row_match <- match(nodes[ii,]$row_num, matches$ast_row)
+    parse_indx[ii] <- matches$parse_row[row_match]
   }
 
-  v_parse[parse_indx]
+  g_parse[parse_indx,]
+}
+
+#' @export
+enhance_ast <- function(exp) {
+  if (!is.expression(exp)) exp <- parse(text = exp)
+
+  g <- create_parse_graph(exp)
+  g_ast <- create_parse_graph(exp, type = 'ast')
+
+  n_ast_nodes <- nrow(g_ast)
+  all_matches <- data.frame(
+    parse_row = rep(NA, n_ast_nodes),
+    ast_row =   rep(NA, n_ast_nodes)
+    )
+
+  all_matches[1,] <- 1
+  max_match <- 1
+  ii <- 1
+  while (max_match < n_ast_nodes) {
+    crnt_ast <- g_ast[all_matches[ii, 'ast_row'],]
+    crnt_parse <- g[all_matches[ii, 'parse_row'],]
+
+    if (is.null(crnt_ast$children[[1]])) {
+      ii <- ii + 1
+      next
+    }
+
+    matches <- match_expr(g, g_ast, crnt_parse, crnt_ast)
+    n_matches <- nrow(matches)
+    if (n_matches > 0)
+      all_matches[(max_match + 1):(max_match+n_matches),] <- matches
+
+    max_match <- max_match + n_matches
+    ii <- ii + 1
+  }
+
+  parse_cols <- c('line1', 'col1', 'line2', 'col2')
+  ordered_g <- g[all_matches$parse_row,]
+  for (k in parse_cols) {
+    g_ast[all_matches$ast_row, k] <- ordered_g[,k]
+  }
+  g_ast$parse_row_num <- ordered_g$row_num
+
+  g_ast
 }
 
 #' Produce an ast or parse graph of an expression
@@ -181,11 +295,18 @@ match_path <- function(g_parse, g_ast, id) {
 #' plot(g_ast, layout = layout.reingold.tilford)
 #'
 #' # find code corresponding to `$` call
-#' plot_match(g, g_ast, V(g_ast)[label == "$"]$id)
+#' plot_match(g, g_ast, 8)
 #'
 #' @export
 plot_match <- function(g_parse, g_ast, id) {
-  parse_path <- match_path(g_parse, g_ast, id)
-  igraph::V(g_parse)[parse_path]$color <- 'lightblue'
-  plot(g_parse, layout = layout.reingold.tilford)
+
+  parse_path <- match_path(g_parse, g_ast, id)$row_num
+
+  edge_pairs <- with(g_parse, cbind(match(parent, id), row_num)[-1,])
+  h <- igraph::graph.tree(0) +
+    igraph::vertices(id = g_parse$row_num, label = g_parse$text) +
+    igraph::edges(c(t(edge_pairs)))
+
+  igraph::V(h)[parse_path]$color <- 'lightblue'
+  plot(h, layout = layout.reingold.tilford)
 }

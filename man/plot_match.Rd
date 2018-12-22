@@ -28,6 +28,6 @@ g_ast <- create_parse_graph(exp, type = "ast")
 plot(g_ast, layout = layout.reingold.tilford)
 
 # find code corresponding to `$` call
-plot_match(g, g_ast, V(g_ast)[label == "$"]$id)
+plot_match(g, g_ast, 8)
 
 }
