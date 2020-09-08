@@ -46,7 +46,7 @@ ui <- fluidPage(
      tags$script(read_file("ace_mark_handler.js"))
    ),
    # Application title
-   titlePanel("Old Faithful Geyser Data"),
+   titlePanel("Straw: connecting the R AST to parsed code"),
 
    # Sidebar with a slider input for number of bins
    # sidebarLayout(
