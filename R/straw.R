@@ -38,6 +38,7 @@ create_ast_graph <- function(x, acc = NULL, parent_id = NA) {
 
 
 create_ast_df <- function(x) {
+  if (is.character(x)) x <- parse(x)
   if (!is.expression(x)) x <- as.expression(substitute(x))
   nodes <- create_ast_graph(x)
 
@@ -68,6 +69,7 @@ create_parse_graph <- function(expr, type = c("parse", "ast")[1]) {
     header = y[1,]
     header[1,] = NA
     header[1, 'id'] = 0
+    header[1, 'text'] = ""
     y = rbind(header, y)
     y$row_num = 1:nrow(y)
   }
@@ -83,6 +85,7 @@ create_parse_graph <- function(expr, type = c("parse", "ast")[1]) {
 
   # find edges
   y$children <- multimatch(y$id, y$parent)
+  y$children[sapply(y$children, is.null)] <- list(integer())
 
   y
 }
@@ -111,11 +114,10 @@ match_expr <- function(g_parse, g_ast, parse_node, ast_node) {
 
   # note: could also use %||% from rlang
   ast_children <- g_ast[ast_node$children[[1]],]
-  n_ast <- nrow(ast_children) %||% 0
+  n_ast <- nrow(ast_children)
 
   if (n_ast == 0) {
     NULL
-  } else if (ast_node$node[[1]]) {
   } else if (is.pairlist(ast_node$node[[1]])) {
     # pairlist occurs inside function definition, but its children are
     # matched when visiting the function (see block below)
@@ -124,6 +126,7 @@ match_expr <- function(g_parse, g_ast, parse_node, ast_node) {
     # in the ast, function parameters are children of a pairlist,
     # parse node: function ( a = <expr1>, b = <expr2> ... ) <expr>
     #
+    parse_children <- g_parse[parse_node$children[[1]],]
 
     # keep `function`, "(", and body expr
     # "(" will correspond to pairlist in ast
@@ -152,7 +155,8 @@ match_expr <- function(g_parse, g_ast, parse_node, ast_node) {
 
   } else {
     parse_children <- g_parse[parse_node$children[[1]],]
-    expr <- filter(parse_children, token == "expr")
+    # note: most operators are expr, but a literal = is its own kind of token
+    expr <- filter(parse_children, token == "expr" | token == "equal_assign")
 
     n_expr <- nrow(expr) %||% 0
 
@@ -238,7 +242,7 @@ match_path <- function(g_parse, g_ast, row_num) {
 
 #' @export
 enhance_ast <- function(exp) {
-  if (!is.expression(exp)) exp <- parse(text = exp)
+  if (!is.expression(exp)) exp <- parse(text = exp, keep.source = TRUE)
 
   g <- create_parse_graph(exp)
   g_ast <- create_parse_graph(exp, type = 'ast')
@@ -256,7 +260,7 @@ enhance_ast <- function(exp) {
     crnt_ast <- g_ast[all_matches[ii, 'ast_row'],]
     crnt_parse <- g[all_matches[ii, 'parse_row'],]
 
-    if (is.null(crnt_ast$children[[1]])) {
+    if (length(crnt_ast$children[[1]]) == 0) {
       ii <- ii + 1
       next
     }
@@ -308,5 +312,5 @@ plot_match <- function(g_parse, g_ast, id) {
     igraph::edges(c(t(edge_pairs)))
 
   igraph::V(h)[parse_path]$color <- 'lightblue'
-  plot(h, layout = layout.reingold.tilford)
+  plot(h, layout = igraph::layout.reingold.tilford)
 }

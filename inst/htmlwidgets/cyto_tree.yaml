@@ -1,0 +1,6 @@
+dependencies:
+  - name: cyto_tree
+    version: 0.0.1
+    src: htmlwidgets/cyto_tree
+    script: 
+      - bundle.js

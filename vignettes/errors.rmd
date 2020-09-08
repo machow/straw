@@ -1,0 +1,45 @@
+---
+title: "errors"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(straw)
+```
+
+```{r}
+# comma
+expr <- "x[1,]"
+
+```
+
+```{r}
+# dots
+expr <- "function(a = 1, ...) 2"
+```
+
+```{r}
+# literal a in in $ statement
+expr <- "d$a"
+```
+
+```{r}
+# TOFIX: need to detect EQ_ASSIGN tokens
+#        will this be expensive w/o context?
+
+# note occurs when using "=" instead of "<-"
+# treats it more like function signature...
+# (occurs even with multiple statements)
+a = 2
+
+# even worse (compare to a <- b <- 3)
+a = b = 3
+
+parse(text = "a = b = 3") %>%
+  create_parse_graph(type = "ast") %>%
+  tbl_to_cyto() %>%
+  cytoscape_dagre()
+```
+
+

@@ -1,0 +1,65 @@
+---
+title: "code position to ast"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(straw)
+options(keep.source = TRUE)
+
+expr <- parse(text = "
+function(a = 1) {
+  2
+  3 + 3
+}")
+
+g <- create_parse_graph(expr)
+g_ast <- create_parse_graph(expr, type = 'ast')
+
+cytoscape_dagre(tbl_to_cyto(g))
+g
+
+ast <- enhance_ast(expr)
+ast
+```
+
+```{r}
+find_code <- function (enhanced_ast, line1, col1, line2, col2) {
+  code <- enhanced_ast[-1,]
+  indx <- (
+    code$line1 <= line1 & code$line2 >= line2 &
+    code$col1 <= col1 & code$col2 >= col2
+    )
+  
+  rects <- code[indx,]
+  
+  if (nrow(rects) == 1)
+    return(rects)
+  
+  # find smallest bounding rectangle
+  min_indx <- with(rects, which.min(line1 * line2 * col1 * col2))
+  rects[min_indx,]
+}
+
+# find the smallest bounded rectangle
+# line: 4, 4    column: 3, 3
+find_code(ast, 4, 3, 4, 3)[,-c(2,3)]
+find_code(ast, 4, 3, 4, 5)[,-c(2,3)]
+```
+
+```{r}
+expr2 <- parse(text = "
+{
+  3 + 3
+}
+")
+
+ast <- enhance_ast(expr2)
+find_code(ast, 3, 3, 3, 4)
+ast
+```
+

@@ -1,0 +1,173 @@
+---
+title: "ast challenges"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(keep.source = TRUE)
+```
+
+```{r}
+library(straw)
+
+plot_ast <- . %>%
+  parse(text = .) %>%
+  create_parse_graph(type = "ast") %>%
+  tbl_to_cyto() %>%
+  cytoscape_dagre(width = "100%")
+
+plot_parse <- . %>%
+  parse(text = .) %>%
+  create_parse_graph() %>%
+  tbl_to_cyto() %>%
+  cytoscape_dagre(width = "100%")
+```
+
+
+## Functions 
+
+```{r}
+expr <- parse(text = "function(a = 1) {2}")
+# function node consists of 3 entries
+#   1. function keyword
+#   2. function args (a pairlist)
+#   3. function body (expression | anything)
+fun <- expr[[1]]
+
+# the pairlist is the trickiest to handle,
+# since in the parse tree each arg is a node
+fun[[2]]
+```
+
+<div class = "row">
+<div class = "col-md-6">
+```{r}
+plot_parse(expr)
+```
+</div>
+<div class = "col-md-6">
+```{r}
+plot_ast(expr)
+```
+</div>
+</div>
+
+
+```{r}
+g <- create_parse_graph(expr)
+g_ast <- create_parse_graph(expr, type = 'ast')
+
+match_expr(g, g_ast, g[2,], g_ast[2,])
+```
+
+
+
+## Nesting exceptions
+
+### function formals
+
+```{r}
+expr <- "function(a, b = 1) 2"
+```
+
+<div class = "row">
+<div class = "col-md-6">
+```{r}
+plot_ast(expr)
+```
+</div>
+<div class = "col-md-6">
+```{r}
+plot_parse(expr)
+```
+</div>
+</div>
+
+### `=` operator
+
+Need to dig down in AST
+
+```{r}
+expr2 <- "a + 1= 1 = 2 = 3; 1 + 1"
+```
+
+<div class = "row">
+<div class = "col-md-6">
+```{r}
+plot_ast(expr2)
+```
+</div>
+<div class = "col-md-6">
+```{r}
+plot_parse(expr2)
+```
+</div>
+</div>
+
+
+```{r}
+expr3 <- "
+a = 1 + 2
+b = 3
+"
+```
+
+<div class = "row">
+<div class = "col-md-6">
+```{r}
+plot_ast(expr3)
+```
+</div>
+<div class = "col-md-6">
+```{r}
+plot_parse(expr3)
+```
+</div>
+</div>
+
+
+```{r, include}
+p3 <- parse(text = expr3)
+p3[[1]]
+pd <- create_parse_graph(p3)
+pd[pd$children[[1]],]
+```
+
+
+
+```{r}
+expr4 <- "function(a) b = 1"
+```
+
+<div class = "row">
+<div class = "col-md-6">
+```{r}
+plot_ast(expr4)
+```
+</div>
+<div class = "col-md-6">
+```{r}
+plot_parse(expr4)
+```
+</div>
+</div>
+
+<div class = "row">
+<div class = "col-md-6">
+```{r}
+# error: "a <- b = 1"
+plot_parse("`=` = 2")
+```
+</div>
+<div class = "col-md-6">
+```{r}
+plot_ast("`=` = 2")
+```
+</div>
+</div>
+
+
+
