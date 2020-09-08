@@ -61,10 +61,10 @@ ui <- fluidPage(
       # Show a plot of the generated distribution
       mainPanel(
         aceEditor(
-          "ace_code",
+          "ace",
           value = default_code,
-          selectionId = "ace_selection",
-          cursorId = "ace_cursor",
+          selectionId = "selection",
+          cursorId = "cursor",
           mode = "r",
           height = '200px'
           ),
@@ -84,9 +84,16 @@ ui <- fluidPage(
 
 # Define server logic required to draw a histogram
 server <- function(input, output, session) {
+  crnt_parse <- reactive({
+    create_parse_graph(parse(text = req(input$ace), keep.source = TRUE))
+  })
+
+  raw_ast <- reactive({
+    create_parse_graph(parse(text = req(input$ace), keep.source = TRUE), type = "ast")
+  })
+
   crnt_ast <- reactive({
-    req(input$ace_code)
-    enhance_ast(input$ace_code)
+    enhance_ast(g = crnt_parse(), g_ast = raw_ast())
   })
 
   selected_row <- reactive({
@@ -97,25 +104,39 @@ server <- function(input, output, session) {
   })
 
   output$parseGraph <- renderCytoscape_dagre({
-    req(input$ace_code)
-    pd <- getParseData(parse(text = input$ace_code))
+    req(input$ace)
+    sel <- selected_row()
+
+    pd <- crnt_parse()
+
+    cursor <- req(input$ace_cursor)
+    row <- cursor$row + 1
+    col <- cursor$column + 1
+
+    sel <- find_code(pd, row, col, row, col)
+    pd$highlight <- FALSE
+    pd[pd$id == sel$id, 'highlight'] <- TRUE
+
     cytoscape_dagre(tbl_to_cyto(pd))
   })
 
   output$astGraph <- renderCytoscape_dagre({
     #ast <- create_parse_graph(exp, type = "ast")
     ast <- crnt_ast()
+
     ast$highlight <- FALSE
     sel <- selected_row()
+
     ast[sel$row_num, 'highlight'] <- TRUE
-    session$sendCustomMessage(
-      "ace-mark", c(sel$line1 - 1, sel$col1 - 1, sel$line2 - 1, sel$col2)
-      )
-    print(selected_row())
+    #session$sendCustomMessage(
+    #  "ace-mark", c(sel$line1 - 1, sel$col1 - 1, sel$line2 - 1, sel$col2)
+    #)
+
     cytoscape_dagre(tbl_to_cyto(ast))
   })
 }
 
+options(shiny.reactlog=TRUE)
 # Run the application
 shinyApp(ui = ui, server = server)
 

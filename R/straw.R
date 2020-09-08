@@ -241,11 +241,15 @@ match_path <- function(g_parse, g_ast, row_num) {
 }
 
 #' @export
-enhance_ast <- function(exp) {
-  if (!is.expression(exp)) exp <- parse(text = exp, keep.source = TRUE)
+enhance_ast <- function(exp = NULL, g = NULL, g_ast = NULL) {
+  if (!is.null(exp)) {
+    if (!is.expression(exp)) exp <- parse(text = exp, keep.source = TRUE)
 
-  g <- create_parse_graph(exp)
-  g_ast <- create_parse_graph(exp, type = 'ast')
+    g <- create_parse_graph(exp)
+    g_ast <- create_parse_graph(exp, type = 'ast')
+  } else if (xor(is.null(g), is.null(g_ast))) {
+    stop("Both g and g_ast must either be NULL, or specified")
+  }
 
   n_ast_nodes <- nrow(g_ast)
   all_matches <- data.frame(
